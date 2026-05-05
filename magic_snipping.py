@@ -326,9 +326,9 @@ def main(argv: list[str]) -> int:
                         help="Print one copy per unique card instead of N copies.")
     parser.add_argument("--include-sideboard", action="store_true",
                         help="Also include sideboard / maybeboard / tokens sections.")
-    parser.add_argument("--include-backs", action="store_true",
-                        help="For double-faced cards, also save and print the back face. "
-                             "Default: front only, so the image count matches the decklist count.")
+    parser.add_argument("--no-backs", action="store_true",
+                        help="For double-faced cards, only save the front face. "
+                             "Default: both faces are included.")
     parser.add_argument("--cols", type=int, default=3)
     parser.add_argument("--rows", type=int, default=3)
     parser.add_argument("--no-separator", action="store_true")
@@ -358,7 +358,7 @@ def main(argv: list[str]) -> int:
     if not cards:
         return 2
 
-    images = download_images(cards, images_dir, include_backs=args.include_backs)
+    images = download_images(cards, images_dir, include_backs=not args.no_backs)
     if not images:
         LOG.error("No images were downloaded — see warnings above.")
         return 3
