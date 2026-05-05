@@ -251,7 +251,7 @@ def build_pdf(
     cols: int = 3,
     rows: int = 3,
     expand_quantity: bool = True,
-    separator: bool = True,
+    gutter_mm: float = 0.0,
 ) -> None:
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
 
@@ -270,7 +270,7 @@ def build_pdf(
 
     page_w, page_h = A4
     margin = 8 * mm
-    gutter = 2 * mm
+    gutter = gutter_mm * mm
     cell_w = (page_w - 2 * margin - (cols - 1) * gutter) / cols
     cell_h = (page_h - 2 * margin - (rows - 1) * gutter) / rows
     aspect = 88.0 / 63.0  # MTG card aspect ratio
@@ -279,8 +279,8 @@ def build_pdf(
     else:
         cell_w = cell_h / aspect
 
-    LOG.info("PDF: %d images, %dx%d per page, cell %.1fx%.1fmm",
-             len(sequence), cols, rows, cell_w / mm, cell_h / mm)
+    LOG.info("PDF: %d images, %dx%d per page, cell %.1fx%.1fmm, gutter %.1fmm",
+             len(sequence), cols, rows, cell_w / mm, cell_h / mm, gutter_mm)
 
     c = canvas.Canvas(str(output_pdf), pagesize=A4)
     per_page = cols * rows
@@ -298,16 +298,6 @@ def build_pdf(
                         preserveAspectRatio=True, anchor="c", mask="auto")
         except Exception as e:
             LOG.error("Could not place %s: %s", img_path, e)
-
-        if separator:
-            c.setStrokeColorRGB(0.6, 0.6, 0.6)
-            c.setLineWidth(0.3)
-            if col < cols - 1:
-                lx = x + cell_w + gutter / 2
-                c.line(lx, y, lx, y + cell_h)
-            if row < rows - 1:
-                ly = y - gutter / 2
-                c.line(x, ly, x + cell_w, ly)
 
     c.save()
     LOG.info("Wrote %s (%d pages)", output_pdf,
@@ -331,7 +321,9 @@ def main(argv: list[str]) -> int:
                              "Default: both faces are included.")
     parser.add_argument("--cols", type=int, default=3)
     parser.add_argument("--rows", type=int, default=3)
-    parser.add_argument("--no-separator", action="store_true")
+    parser.add_argument("--gutter", type=float, default=0.0,
+                        help="Spacing in mm between cards (default 0: cards adjacent so a "
+                             "single straight cut separates two of them).")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -370,7 +362,7 @@ def main(argv: list[str]) -> int:
         cols=args.cols,
         rows=args.rows,
         expand_quantity=not args.dedupe,
-        separator=not args.no_separator,
+        gutter_mm=args.gutter,
     )
     return 0
 
