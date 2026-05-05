@@ -183,26 +183,34 @@ def _scryfall_named(name: str) -> dict | None:
         time.sleep(_SCRYFALL_DELAY)
 
 
-def _image_urls_from_scryfall(card_json: dict) -> list[tuple[str, str]]:
-    """Return [(face_label, png_url), ...]. For double-faced cards, both faces."""
+def _image_urls_from_scryfall(card_json: dict, *, include_backs: bool = False) -> list[tuple[str, str]]:
+    """Return [(face_label, png_url), ...]. For DFC/MDFC cards, the back face is
+    only included when include_backs is True (default: front only, so the image
+    count matches the decklist count)."""
     out: list[tuple[str, str]] = []
     if "image_uris" in card_json and "png" in card_json["image_uris"]:
         out.append(("", card_json["image_uris"]["png"]))
         return out
-    for i, face in enumerate(card_json.get("card_faces", []) or []):
+    faces = card_json.get("card_faces") or []
+    for i, face in enumerate(faces):
+        if i > 0 and not include_backs:
+            break
         uris = face.get("image_uris") or {}
         if "png" in uris:
             out.append((f"face{i + 1}", uris["png"]))
     return out
 
 
-def download_images(cards: Iterable[Card], images_dir: Path) -> dict[Card, list[Path]]:
+def download_images(cards: Iterable[Card], images_dir: Path, *, include_backs: bool = False) -> dict[Card, list[Path]]:
     images_dir.mkdir(parents=True, exist_ok=True)
     saved: dict[Card, list[Path]] = {}
     cards = list(cards)
     for i, card in enumerate(cards, 1):
         # If we already have at least one image cached for this slug, reuse it.
+        # When include_backs is False, prefer files without a face2 suffix.
         existing = sorted(images_dir.glob(f"{card.slug}*.png"))
+        if not include_backs:
+            existing = [p for p in existing if "_face2" not in p.stem]
         if existing:
             LOG.info("[%d/%d] cached %s (%d file(s))", i, len(cards), card.slug, len(existing))
             saved[card] = existing
@@ -212,7 +220,7 @@ def download_images(cards: Iterable[Card], images_dir: Path) -> dict[Card, list[
         meta = _scryfall_named(card.name)
         if not meta:
             continue
-        urls = _image_urls_from_scryfall(meta)
+        urls = _image_urls_from_scryfall(meta, include_backs=include_backs)
         if not urls:
             LOG.warning("  no image_uris.png for %r", card.name)
             continue
@@ -318,6 +326,9 @@ def main(argv: list[str]) -> int:
                         help="Print one copy per unique card instead of N copies.")
     parser.add_argument("--include-sideboard", action="store_true",
                         help="Also include sideboard / maybeboard / tokens sections.")
+    parser.add_argument("--include-backs", action="store_true",
+                        help="For double-faced cards, also save and print the back face. "
+                             "Default: front only, so the image count matches the decklist count.")
     parser.add_argument("--cols", type=int, default=3)
     parser.add_argument("--rows", type=int, default=3)
     parser.add_argument("--no-separator", action="store_true")
@@ -347,7 +358,7 @@ def main(argv: list[str]) -> int:
     if not cards:
         return 2
 
-    images = download_images(cards, images_dir)
+    images = download_images(cards, images_dir, include_backs=args.include_backs)
     if not images:
         LOG.error("No images were downloaded — see warnings above.")
         return 3
