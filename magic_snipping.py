@@ -248,10 +248,11 @@ def build_pdf(
     images: dict[Card, list[Path]],
     output_pdf: Path,
     *,
-    cols: int = 3,
-    rows: int = 3,
+    card_w_mm: float = 63.0,
+    card_h_mm: float = 88.0,
     expand_quantity: bool = True,
     gutter_mm: float = 0.0,
+    margin_mm: float = 5.0,
 ) -> None:
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
 
@@ -269,21 +270,27 @@ def build_pdf(
         return
 
     page_w, page_h = A4
-    margin = 8 * mm
+    margin = margin_mm * mm
     gutter = gutter_mm * mm
-    cell_w = (page_w - 2 * margin - (cols - 1) * gutter) / cols
-    cell_h = (page_h - 2 * margin - (rows - 1) * gutter) / rows
-    aspect = 88.0 / 63.0  # MTG card aspect ratio
-    if cell_h / cell_w > aspect:
-        cell_h = cell_w * aspect
-    else:
-        cell_w = cell_h / aspect
+    cell_w = card_w_mm * mm
+    cell_h = card_h_mm * mm
 
-    LOG.info("PDF: %d images, %dx%d per page, cell %.1fx%.1fmm, gutter %.1fmm",
-             len(sequence), cols, rows, cell_w / mm, cell_h / mm, gutter_mm)
+    cols = max(1, int((page_w - 2 * margin + gutter) // (cell_w + gutter)))
+    rows = max(1, int((page_h - 2 * margin + gutter) // (cell_h + gutter)))
+    per_page = cols * rows
+
+    # Center the grid on the page so trim marks align with what you measure.
+    grid_w = cols * cell_w + (cols - 1) * gutter
+    grid_h = rows * cell_h + (rows - 1) * gutter
+    x_offset = (page_w - grid_w) / 2
+    y_offset = (page_h - grid_h) / 2
+
+    LOG.info(
+        "PDF: %d images, %dx%d per page, cell %.2fx%.2fmm, gutter %.1fmm",
+        len(sequence), cols, rows, card_w_mm, card_h_mm, gutter_mm,
+    )
 
     c = canvas.Canvas(str(output_pdf), pagesize=A4)
-    per_page = cols * rows
 
     for i, img_path in enumerate(sequence):
         slot = i % per_page
@@ -291,11 +298,13 @@ def build_pdf(
             c.showPage()
         col = slot % cols
         row = slot // cols
-        x = margin + col * (cell_w + gutter)
-        y = page_h - margin - (row + 1) * cell_h - row * gutter
+        x = x_offset + col * (cell_w + gutter)
+        y = page_h - y_offset - (row + 1) * cell_h - row * gutter
         try:
+            # preserveAspectRatio=False so the image fills the exact cell —
+            # this is what makes printer compensation actually work.
             c.drawImage(str(img_path), x, y, width=cell_w, height=cell_h,
-                        preserveAspectRatio=True, anchor="c", mask="auto")
+                        preserveAspectRatio=False, mask="auto")
         except Exception as e:
             LOG.error("Could not place %s: %s", img_path, e)
 
@@ -319,11 +328,21 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--no-backs", action="store_true",
                         help="For double-faced cards, only save the front face. "
                              "Default: both faces are included.")
-    parser.add_argument("--cols", type=int, default=3)
-    parser.add_argument("--rows", type=int, default=3)
+    parser.add_argument("--card-width", type=float, default=63.0,
+                        help="Target printed card width in mm (MTG official: 63).")
+    parser.add_argument("--card-height", type=float, default=88.0,
+                        help="Target printed card height in mm (MTG official: 88).")
+    parser.add_argument("--measured-width", type=float, default=None,
+                        help="If you printed a test page and the cards came out narrower than "
+                             "--card-width, pass the measured width here. The PDF will be "
+                             "pre-scaled to compensate for your printer.")
+    parser.add_argument("--measured-height", type=float, default=None,
+                        help="Same as --measured-width but for height.")
     parser.add_argument("--gutter", type=float, default=0.0,
                         help="Spacing in mm between cards (default 0: cards adjacent so a "
                              "single straight cut separates two of them).")
+    parser.add_argument("--margin", type=float, default=5.0,
+                        help="Outer page margin in mm (default 5).")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -355,14 +374,28 @@ def main(argv: list[str]) -> int:
         LOG.error("No images were downloaded — see warnings above.")
         return 3
 
+    # Printer compensation: if the user measured smaller-than-target prints,
+    # scale up the PDF cell so the printed result matches the target size.
+    pdf_card_w = args.card_width
+    pdf_card_h = args.card_height
+    if args.measured_width and args.measured_width > 0:
+        pdf_card_w = args.card_width * (args.card_width / args.measured_width)
+        LOG.info("Compensating width: measured %.2f → PDF cell %.2f mm",
+                 args.measured_width, pdf_card_w)
+    if args.measured_height and args.measured_height > 0:
+        pdf_card_h = args.card_height * (args.card_height / args.measured_height)
+        LOG.info("Compensating height: measured %.2f → PDF cell %.2f mm",
+                 args.measured_height, pdf_card_h)
+
     build_pdf(
         cards,
         images,
         pdf_path,
-        cols=args.cols,
-        rows=args.rows,
+        card_w_mm=pdf_card_w,
+        card_h_mm=pdf_card_h,
         expand_quantity=not args.dedupe,
         gutter_mm=args.gutter,
+        margin_mm=args.margin,
     )
     return 0
 
